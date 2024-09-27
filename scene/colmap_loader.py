@@ -32,7 +32,8 @@ CAMERA_MODELS = {
     CameraModel(model_id=7, model_name="FOV", num_params=5),
     CameraModel(model_id=8, model_name="SIMPLE_RADIAL_FISHEYE", num_params=4),
     CameraModel(model_id=9, model_name="RADIAL_FISHEYE", num_params=5),
-    CameraModel(model_id=10, model_name="THIN_PRISM_FISHEYE", num_params=12)
+    CameraModel(model_id=10, model_name="THIN_PRISM_FISHEYE", num_params=12),
+    CameraModel(model_id=11, model_name="OPENCV_SPHERICAL", num_params=0)
 }
 CAMERA_MODEL_IDS = dict([(camera_model.model_id, camera_model)
                          for camera_model in CAMERA_MODELS])
@@ -168,10 +169,13 @@ def read_intrinsics_text(path):
                 elems = line.split()
                 camera_id = int(elems[0])
                 model = elems[1]
-                assert model == "PINHOLE", "While the loader support other types, the rest of the code assumes PINHOLE"
+                #assert model == "PINHOLE", "While the loader support other types, the rest of the code assumes PINHOLE"
                 width = int(elems[2])
                 height = int(elems[3])
-                params = np.array(tuple(map(float, elems[4:])))
+                if model != "OPENCV_SPHERICAL":
+                    params = np.array(tuple(map(float, elems[4:])))
+                else:
+                    params = None
                 cameras[camera_id] = Camera(id=camera_id, model=model,
                                             width=width, height=height,
                                             params=params)
@@ -292,3 +296,17 @@ def read_colmap_bin_array(path):
         array = np.fromfile(fid, np.float32)
     array = array.reshape((width, height, channels), order="F")
     return np.transpose(array, (1, 0, 2)).squeeze()
+
+
+def read_imgs_text(path):
+    img_list = []
+    with open(path, "r") as fid:
+        while True:
+            line = fid.readline()
+            if not line:
+                break
+            line = line.strip()
+            if len(line) > 0 and line[0] != "#":
+                elems = line.split()
+                img_list.append(elems[0])
+    return img_list

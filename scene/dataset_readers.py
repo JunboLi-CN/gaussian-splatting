@@ -14,7 +14,7 @@ import sys
 from PIL import Image
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
-    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
+    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text, read_imgs_text
 from scene.opensfm_loader import read_opensfm_extrinsics_split, read_opensfm, read_opensfm_intrinsics_split, qvec2rotmat, read_opensfm_points3D
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
@@ -70,7 +70,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, all_imgs_list):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -96,16 +96,22 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
             focal_length_y = intr.params[1]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
+        elif intr.model=="OPENCV_SPHERICAL":
+            FovY = math.pi / 2
+            FovX = math.pi / 2 # just for calculation
+            panorama = True
         else:
-            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE or OPENCV_SPHERICAL cameras) supported!"
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
-        image = Image.open(image_path)
+        if image_name in all_imgs_list:
+            image = Image.open(image_path)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
-        cam_infos.append(cam_info)
+            cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, mask=None,
+                                image_path=image_path, mask_path=None, image_name=image_name, width=width, height=height, panorama=panorama)
+
+            cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
 
@@ -158,7 +164,7 @@ def readOpensfmCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_fold
             FovX = math.pi / 2 # just for calculation
             panorama = True
         else:
-            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE or SPHERICAL cameras) supported!"
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = extr.name
@@ -246,17 +252,25 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    train_imgs_list = read_imgs_text(os.path.join(path, "train.txt"))
+    test_imgs_list = read_imgs_text(os.path.join(path, "test.txt"))
+    all_imgs_list = train_imgs_list + test_imgs_list
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), all_imgs_list=all_imgs_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if c.image_name in train_imgs_list]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if c.image_name in test_imgs_list]
+        # print(train_imgs_list)
+        # print(test_cam_infos)
+        # train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        # test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
-        train_cam_infos = cam_infos
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if c in all_imgs_list]
         test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
+    print("nerf_normalization = ", nerf_normalization)
 
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
     bin_path = os.path.join(path, "sparse/0/points3D.bin")
